@@ -614,12 +614,13 @@ git_tag () {
 # shellcheck disable=SC2154
 PROGSTEP[local_kube_cross]="TAG/BUILD LOCAL KUBE CROSS"
 local_kube_cross () {
-  local docker_image="$GCRIO_PATH_PROD/kube-cross"
-  local version
-  local image="$docker_image:$version"
-  local local_image="$docker_image:local"
+  local version image local_image docker_image
 
-  version="$(cat "$TREE_ROOT/build/build-image/cross/VERSION")"
+  docker_image="${GCRIO_PATH_PROD}/kube-cross"
+  version="$(cat "${TREE_ROOT}/build/build-image/cross/VERSION")"
+  image="${docker_image}:${version}"
+  local_image="${docker_image}:local"
+
   logecho -n "Checking if $image exists locally: "
   if logrun -s docker pull "$image"; then
     logecho -n "Tagging docker image $image as $local_image: "
@@ -627,7 +628,7 @@ local_kube_cross () {
   else
     logecho -n "Building docker image $image: "
     logrun -s docker build --cache-from "$docker_image" -t "$image" \
-                           -t "$local_image" "$TREE_ROOT/build/build-image/cross/"
+                           -t "$local_image" "${TREE_ROOT}/build/build-image/cross/"
   fi
 }
 
