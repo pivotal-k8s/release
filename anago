@@ -580,8 +580,13 @@ checkout_object () {
   fi
 
   # Checkout location
-  logecho -n "Checking out $tree_object: "
-  logrun -s git checkout $branch_arg "$tree_object" "$branch_point" || return 1
+  checkout_args=()
+  [ -n "${branch_arg}" ] && checkout_args+=( "${branch_arg}" )      # maybe '-b'
+  [ -n "${tree_object}" ] && checkout_args+=( "${tree_object}" )    # hopefully 'release-1.12'
+  [ -n "${branch_point}" ] && checkout_args+=( "${branch_point}" )  # maybe <someCommitShaOrBranchName>
+
+  logecho -n "Checking out $tree_object (${checkout_args[*]}): "
+  logrun -s git checkout "${checkout_args[@]}" || return 1
 }
 
 ##############################################################################
