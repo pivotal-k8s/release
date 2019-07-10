@@ -39,6 +39,22 @@ verify: #verify-shellcheck ## Runs verification scripts to ensure correct execut
 verify-shellcheck: ## Runs shellcheck
 	./hack/verify-shellcheck.sh
 
+##@ Tests
+
+.PHONY: test go-test sh-test
+
+test: go-test sh-test ## Run all tests
+
+go-test: ## Run all go (unit) tests
+	go test ./...
+
+sh-test: ## Run all shell (unit) tests
+	@mapfile -d $$'\0' -t testFiles < <( find . -name '*_test.sh' -print0 ) ; \
+	for i in "$${testFiles[@]}" ; \
+	do \
+		$(SHELL) "$${i}" || exit 1 ; \
+	done
+
 ##@ Helpers
 
 .PHONY: help
