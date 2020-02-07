@@ -17,10 +17,18 @@ limitations under the License.
 package internal
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 
+	"github.com/pkg/errors"
+	"k8s.io/release/pkg/git"
 	"k8s.io/release/pkg/log"
+	"k8s.io/release/pkg/notes"
+	noteopts "k8s.io/release/pkg/notes/options"
 )
 
 const relnoteScript = `
@@ -39,9 +47,123 @@ type ReleaseNoter struct {
 	GithubToken     string
 
 	CommandCreator CommandCreator
+	RepoOpener     RepoOpener
 }
 
 func (r *ReleaseNoter) GetMarkdown() (string, error) {
+	notes, err := r.relnotes()
+	if err != nil {
+		return "", errors.Wrapf(err, "gathering release notes")
+	}
+
+	prs := "### some pending PRs"
+	builds := "### find a green build"
+
+	return strings.Join([]string{notes, prs, builds}, "\n\n----\n\n"), nil
+}
+
+var releaseTagRE = regexp.MustCompile(`^v\d+\.\d+.\d+$`)
+
+func filterReleaseTags(tags []string) []string {
+	filtered := []string{}
+	for _, tag := range tags {
+		if releaseTagRE.MatchString(tag) {
+			filtered = append(filtered, tag)
+		}
+	}
+	return filtered
+}
+
+//counterfeiter:generate . Repo
+type Repo interface {
+	CurrentBranch() (branch string, err error)
+	TagsForBranch(branch string) (tags []string, err error)
+	Head() (hash string, err error)
+}
+
+type RepoOpener func(path string) (Repo, error)
+
+var defaultRepoOpener RepoOpener = func(p string) (Repo, error) {
+	return git.OpenRepo(p)
+}
+
+func (o RepoOpener) Open(path string) (Repo, error) {
+	if o == nil {
+		o = defaultRepoOpener
+	}
+	return o(path)
+}
+
+func (r *ReleaseNoter) relnotes() (string, error) {
+	repo, err := r.RepoOpener.Open(r.K8sDir)
+	if err != nil {
+		return "", errors.Wrapf(err, "opening repo")
+	}
+
+	branch, err := repo.CurrentBranch()
+	if err != nil {
+		return "", errors.Wrapf(err, "getting current checked out branch")
+	}
+
+	tags, err := repo.TagsForBranch(branch)
+	if err != nil {
+		return "", errors.Wrapf(err, "getting tags on current branch")
+	}
+	releaseTags := filterReleaseTags(tags)
+	if len(releaseTags) < 1 {
+		return "", fmt.Errorf("could not find a release tag (%q) on the current branch", releaseTagRE)
+	}
+	newestPatchRelease := releaseTags[0]
+
+	headSHA, err := repo.Head()
+	if err != nil {
+		return "", errors.Wrapf(err, "getting head of current branch")
+	}
+
+	opts := &noteopts.Options{
+		DiscoverMode: noteopts.RevisionDiscoveryModeNONE,
+		GithubOrg:    git.DefaultGithubOrg,
+		GithubRepo:   git.DefaultGithubRepo,
+		Pull:         false,
+		RepoPath:     r.K8sDir,
+		GithubToken:  r.GithubToken,
+		StartRev:     newestPatchRelease,
+		EndSHA:       headSHA,
+		// Branch :  branch,
+	}
+
+	if err := opts.ValidateAndFinish(); err != nil {
+		return "", errors.Wrapf(err, "finishing opts")
+	}
+
+	ctx := context.TODO()
+	gatherer := notes.NewGatherer(ctx, opts)
+	releaseNotes, history, err := gatherer.ListReleaseNotes()
+	if err != nil {
+		return "", errors.Wrapf(err, "listing release notes")
+	}
+
+	// Create the markdown
+	doc, err := notes.CreateDocument(releaseNotes, history)
+	if err != nil {
+		return "", errors.Wrapf(err, "creating release note document")
+	}
+
+	markdown, err := notes.RenderMarkdown(
+		doc, "", "",
+		opts.StartRev, opts.EndRev,
+	)
+	if err != nil {
+		return "", errors.Wrapf(err, "rendering release notes to markdown")
+	}
+
+	fmt.Fprintf(os.Stderr, "\n\n----\n%s\n----\n\n", markdown)
+
+	return "", fmt.Errorf("some error")
+	return markdown, nil
+}
+
+func (r *ReleaseNoter) getRelnotesMarkdown() (string, error) {
 	binPath, err := filepath.Abs(filepath.Join(r.ReleaseToolsDir, "relnotes"))
 	if err != nil {
 		return "", fmt.Errorf("could not determine current working directory")

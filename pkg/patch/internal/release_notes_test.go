@@ -17,7 +17,6 @@ limitations under the License.
 package internal_test
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -26,7 +25,6 @@ import (
 	"k8s.io/release/pkg/patch/internal"
 	"k8s.io/release/pkg/patch/internal/internalfakes"
 	it "k8s.io/release/pkg/patch/internal/testing"
-	"k8s.io/utils/exec"
 )
 
 func TestReleaseNoter(t *testing.T) {
@@ -37,59 +35,66 @@ func TestReleaseNoter(t *testing.T) {
 		k8sDir          string
 		githubToken     string
 
-		commandOutput []byte
-		commandErr    error
+		repoCurrentBranch    string
+		repoCurrentBranchErr error
 
-		expectedCommandPath string
-		expectedErr         string
-		expectedOutput      string
+		repoTagsForBranch    []string
+		repoTagsForBranchErr error
+
+		repoHead    string
+		repoHeadErr error
+
+		expectedErr    string
+		expectedOutput string
 	}{
 		"happy path": {
-			k8sDir:              "/some/dir/k8s",
-			releaseToolsDir:     "/some/dir/release",
-			githubToken:         "some github token",
-			commandOutput:       []byte("some output"),
-			expectedCommandPath: "/some/dir/release/relnotes",
-			expectedOutput:      "some output",
+			k8sDir:            "/some/dir/k8s",
+			releaseToolsDir:   "/some/dir/release",
+			githubToken:       "some github token",
+			repoCurrentBranch: "release-1.23",
+			repoTagsForBranch: []string{"v1.23.0", "v1.23.1", "v1.23.0-alpha.2"},
+			repoHead:          "someHash",
+			expectedOutput:    "some output",
 		},
-		"when the command returns an error, the error bubbles up": {
-			commandErr:          fmt.Errorf("some random error"),
-			expectedErr:         "some random error",
-			expectedCommandPath: abs(t, "relnotes"),
-		},
-		"when the release dir is a relative path": {
-			releaseToolsDir:     "../release",
-			expectedCommandPath: abs(t, "../release/relnotes"),
-		},
-		"when the k8s dir is a relative path": {
-			k8sDir:              "../k8s",
-			expectedCommandPath: abs(t, "relnotes"),
-		},
+		// "when the command returns an error, the error bubbles up": {
+		// 	commandErr:          fmt.Errorf("some random error"),
+		// 	expectedErr:         "some random error",
+		// 	expectedCommandPath: abs(t, "relnotes"),
+		// },
+		// "when the release dir is a relative path": {
+		// 	releaseToolsDir:     "../release",
+		// 	expectedCommandPath: abs(t, "../release/relnotes"),
+		// },
+		// "when the k8s dir is a relative path": {
+		// 	k8sDir:              "../k8s",
+		// 	expectedCommandPath: abs(t, "relnotes"),
+		// },
 	}
 
 	for name, tc := range tests {
 		tc := tc
 
 		it.Run(t, name, func(t *testing.T) {
-			command := &internalfakes.FakeCmd{}
-			command.OutputReturns(tc.commandOutput, tc.commandErr)
+			repo := &internalfakes.FakeRepo{}
+			repo.CurrentBranchReturns(tc.repoCurrentBranch, tc.repoCurrentBranchErr)
+			repo.TagsForBranchReturns(tc.repoTagsForBranch, tc.repoTagsForBranchErr)
+			repo.HeadReturns(tc.repoHead, tc.repoHeadErr)
 
 			rn := &internal.ReleaseNoter{
 				K8sDir:          tc.k8sDir,
 				ReleaseToolsDir: tc.releaseToolsDir,
 				GithubToken:     tc.githubToken,
-				CommandCreator: func(exe string, args ...string) exec.Cmd {
-					require.Equal(t, "bash", exe)
-					require.Contains(t, args[1], tc.expectedCommandPath)
-					return command
+
+				RepoOpener: func(path string) (internal.Repo, error) {
+					require.Equal(t, path, tc.k8sDir)
+					return repo, nil
 				},
 			}
 
 			output, err := rn.GetMarkdown()
 			it.CheckErrSub(t, err, tc.expectedErr)
 			require.Equal(t, tc.expectedOutput, output, "output")
-			require.Equal(t, tc.k8sDir, command.SetDirArgsForCall(0), "Command#SetDir arg")
-			require.Contains(t, command.SetEnvArgsForCall(0), "GITHUB_TOKEN="+tc.githubToken)
+
 		})
 	}
 }
